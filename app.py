@@ -9,61 +9,19 @@ st.set_page_config(page_title="Swing Trade Portfolio (STP)", page_icon="📈", l
 REPO_NAME = "Swing Trade Portfolio (STP)"
 
 PRESET_CONFIGS = {
-    "Watching": {
-        "tickers": "SPY, QQQ, NVDA, EMXC, VGT",
-        "buffer": 2.0,
-        "rvol": 1.00,
-        "min_atr": 0.00,
-        "rationale": "Neutral baseline settings for active watchlist monitoring. Standard 2.0% buffer, 1.00 RVOL threshold, and no minimum ATR restriction.",
-    },
-    "Broad Market": {
-        "tickers": "SPY, QQQ, DJIA, EMXC, VEA",
-        "buffer": 2.0,
-        "rvol": 0.80,
-        "min_atr": 0.75,
-        "rationale": "Broad indices exhibit moderate volatility. 2.0% buffer filters noise, RVOL 0.80 tracks accumulation, 0.75% ATR screens stagnant assets.",
-    },
-    "Mag7": {
-        "tickers": "NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA",
-        "buffer": 2.5,
-        "rvol": 1.00,
-        "min_atr": 1.00,
-        "rationale": "High-beta tech mega-caps require wider noise filters (2.5%). RVOL 1.00 ensures volume-backed breakouts, 1.00% ATR floor filters consolidation.",
-    },
-    "Sector ETFs": {
-        "tickers": "XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLB, XLRE, XLK, XLU, VGT",
-        "buffer": 2.0,
-        "rvol": 0.85,
-        "min_atr": 0.50,
-        "rationale": "Sectors vary in beta. A 2.0% buffer balances ranges, RVOL 0.85 confirms sector rotation, and 0.50% ATR accounts for defensive ETFs.",
-    },
-    "Bond & Yield ETFs": {
-        "tickers": "SGOV, JPST, JAAA, JBBB, SCYB",
-        "buffer": 1.0,
-        "rvol": 0.10,
-        "min_atr": 0.00,
-        "rationale": "Fixed-income moves in tight bands. Tight 1.0% buffer prevents false regime changes, RVOL 0.10 prevents false flags, ATR 0.00% retains yield assets.",
-    },
-    "Covered Call ETFs": {
-        "tickers": "SPYI, QQQI, JEPI, JEPQ",
+    "Portfolio": {
+        "tickers": "SPYI, QQQI, JAAA, JPST, SCYB",
         "buffer": 1.5,
         "rvol": 0.75,
         "min_atr": 0.25,
-        "rationale": "High-income covered call ETFs. 1.5% buffer captures trend shifts without over-filtering moves, paired with lower RVOL (0.75) and ATR (0.25%).",
+        "rationale": "Core portfolio allocation containing your income, credit, and safe-harbor rotation assets.",
     },
-    "Dividend ETFs": {
-        "tickers": "USMV, SPHD, SCHD, VYM",
+    "Watching": {
+        "tickers": "VOO, VGT",
         "buffer": 2.0,
-        "rvol": 0.75,
+        "rvol": 1.00,
         "min_atr": 0.50,
-        "rationale": "Dividend funds exhibit lower beta. 2.0% buffer absorbs equity fluctuation, while 0.75 RVOL and 0.50% ATR capture steady accumulation.",
-    },
-    "Speculative & Commodities": {
-        "tickers": "FBTC, IBIT, IAUM, GLD, SLV",
-        "buffer": 4.0,
-        "rvol": 1.25,
-        "min_atr": 2.00,
-        "rationale": "Crypto and commodities experience high volatility. 4.0% buffer prevents premature triggers, RVOL 1.25 demands heavy volume, 2.00% ATR filters chop.",
+        "rationale": "Core equity growth watch list for tracking broad market and tech recovery phases.",
     },
 }
 
@@ -246,7 +204,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
 # --- Portfolio Rotation Engine (50/200 EMA Rule) ---
 def evaluate_portfolio_rotation():
     st.subheader("🛡️ Dynamic Portfolio Rotation Engine (50 & 200 EMA Trigger Matrix)")
-    st.markdown("Evaluates benchmark indexes (**SPY** and **QQQ**) to determine whether to hold **Risk-On** (SPYI/QQQI or VOO/VGT) or rotate to **Safe Harbor** (33/33/33 SCYB / JAAA / JPST).")
+    st.markdown("Evaluates benchmark indexes (**SPY** and **QQQ**) to determine whether to hold **Risk-On** (SPYI/QQQI) or rotate to **Safe Harbor** (SCYB / JAAA / JPST).")
 
     benchmarks = ["SPY", "QQQ"]
     rotation_data = []
@@ -260,21 +218,16 @@ def evaluate_portfolio_rotation():
             price = float(c.iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
             ema200 = float(c.ewm(span=200, adjust=False).mean().iloc[-1])
-            atr = get_atr(df)
             
-            # State determination
             if price > ema200 and price > sma50:
                 regime = "🟢 FULL RISK-ON"
-                action = "Hold SPYI / QQQI or VOO / VGT"
-                color = "green"
+                action = "Hold SPYI / QQQI / VOO / VGT"
             elif price > ema200 and price <= sma50:
                 regime = "🟡 CAUTION / PULLBACK"
                 action = "Trim Risk-On Exposure (50% to JAAA/JPST)"
-                color = "orange"
             else:
                 regime = "🔴 FULL RISK-OFF (BEAR)"
                 action = "Rotate 100% to Safe Harbor (SCYB / JAAA / JPST)"
-                color = "red"
 
             rotation_data.append({
                 "Benchmark": b,
@@ -321,9 +274,9 @@ with st.expander("📖 **Methodology Guide & Portfolio Rotation Rules**"):
 st.sidebar.header("Screener Configuration")
 
 url_params = st.query_params
-init_preset = url_params.get("preset", "Watching")
+init_preset = url_params.get("preset", "Portfolio")
 if init_preset not in PRESET_CONFIGS:
-    init_preset = "Watching"
+    init_preset = "Portfolio"
 
 def on_preset_change():
     sel = st.session_state["preset_radio"]
@@ -366,7 +319,6 @@ buffer_setting = st.sidebar.slider("Base Buffer Noise Filter (%)", 1.0, 5.0, act
 rvol_setting = st.sidebar.slider("Min RVOL Breakout Confirmation (x)", 0.1, 2.5, active_defaults["rvol"], 0.05)
 min_atr_setting = st.sidebar.slider("Min Volatility / ATR (%)", 0.0, 5.0, active_defaults["min_atr"], 0.25)
 
-# Always render the Portfolio Rotation Engine at the top
 evaluate_portfolio_rotation()
 st.divider()
 
