@@ -78,32 +78,35 @@ def get_bollinger(close, price):
     return f"NORMAL ({bw_c:.1f}%)", False
 
 def get_logic_result(price, u_th, l_th, slope, adx, rsi, stoch, obv_s, is_sq, ema20, sma50, rvol_ok, rvol, buf):
+    # Above 200 EMA Buffer (Macro Uptrend)
     if price > u_th and slope in ["UP", "FLAT"]:
         if adx < 20:
-            return "⚪ Consolidating", "WAIT", f"Above 200 EMA, but ADX ({adx:.1f}) < 20 signals choppy consolidation. Wait for trend strength expansion."
+            return "⚪ Consolidating", "HOLD EXISTING", "WAIT (No New Buys)", f"Macro trend intact above 200 EMA, but ADX ({adx:.1f}) < 20 shows choppy consolidation. Keep holding current shares; do not add new money."
         if rsi > 70 or stoch > 80:
-            return "🟡 Overbought", "HOLD", f"Macro UP, but short-term RSI ({rsi:.1f}) / Stoch ({stoch:.1f}) extended. Hold existing position, avoid new entry."
+            return "🟡 Overbought", "HOLD EXISTING", "WAIT (Overextended)", f"Macro UP, but short-term RSI ({rsi:.1f}) / Stoch ({stoch:.1f}) are hot. Hold current shares, avoid adding."
         if obv_s < 0 and rsi < 50:
-            return "🔴 Divergence", "WARNING", "Negative OBV volume outflow signals distribution."
+            return "🔴 Divergence", "HOLD / CAUTION", "WAIT", "Negative OBV volume outflow. Hold existing shares but monitor closely for trend weakness."
         if is_sq:
-            return "🟡 Squeeze", "WATCH", "Bollinger Band Squeeze active—prepare for breakout expansion."
+            return "🟡 Squeeze", "HOLD EXISTING", "WATCH", "Bollinger Band Squeeze active—prepare for breakout expansion while holding position."
         if price > ema20 and price > sma50 and rvol_ok:
-            return "🟢 Bullish", "ACCUMULATE", f"Confirmed entry: Macro UP + Short MAs aligned + RVOL ({rvol:.2f}x)."
+            return "🟢 Bullish", "HOLD EXISTING", "ACCUMULATE", f"Strong trend: Macro UP + Short MAs aligned + RVOL ({rvol:.2f}x). Good to hold and accumulate more."
         if price <= ema20 or price <= sma50:
-            return "🟡 Pullback", "WAIT", "Macro UP, but price is pulling back below 20 EMA / 50 SMA. Wait for short-term bounce."
-        return "🟡 Warning", "LOW VOLUME", f"Price above buffer, but short-term RVOL ({rvol:.2f}x) lacks volume confirmation."
+            return "🟡 Pullback", "HOLD EXISTING", "WAIT FOR BOUNCE", "Macro UP, but price is pulling back below short MAs (20 EMA / 50 SMA). Keep holding current shares; wait for bounce to add more."
+        return "🟡 Warning", "HOLD EXISTING", "LOW VOLUME", f"Price above buffer, but short-term RVOL ({rvol:.2f}x) lacks volume. Hold existing position."
 
+    # Below 200 EMA Buffer (Macro Downtrend -> Rotation Trigger)
     if price < l_th and slope == "DOWN":
         if adx < 20:
-            return "⚪ Consolidating", "WEAK BEAR", f"Below 200 EMA, but weak ADX ({adx:.1f})."
+            return "⚪ Consolidating", "HOLD / CAUTION", "WEAK BEAR", f"Below 200 EMA buffer, but weak ADX ({adx:.1f}). Proceed with caution."
         if rvol_ok:
-            return "🔴 Bearish", "SELL", f"Selling volume confirmed below buffer (RVOL: {rvol:.2f}x)."
-        return "🔴 Bearish", "SELL LOW VOL", f"Below buffer with DOWN slope (RVOL: {rvol:.2f}x)."
+            return "🔴 Bearish", "🚨 ROTATE / SELL", "SELL", f"Selling volume confirmed below 200 EMA buffer (RVOL: {rvol:.2f}x). **Action:** Rotate to Safe Harbor (JAAA/JPST/SCYB)."
+        return "🔴 Bearish", "🚨 ROTATE / SELL", "SELL LOW VOL", "Below 200 EMA buffer with DOWN slope. **Action:** Rotate to Safe Harbor (JAAA/JPST/SCYB)."
 
+    # Inside Noise Buffer Zone around 200 EMA
     if l_th <= price <= u_th:
-        return "⚪ Neutral", "BUFFER ZONE", f"Price within +/-{buf*100:.1f}% noise buffer of 200 EMA."
+        return "⚪ Neutral", "HOLD EXISTING", "WAIT (Buffer Zone)", f"Price is within the +/-{buf*100:.1f}% noise buffer of the 200 EMA. **Action:** Hold existing holdings; do not initiate new buys until trend clarifies."
 
-    return "🟡 Warning", "CAUTION", f"Crossed 200 EMA but slope ({slope}) unconfirmed."
+    return "🟡 Warning", "HOLD EXISTING", "CAUTION", f"Crossed 200 EMA boundary with unconfirmed slope ({slope}). Maintain current holding and monitor."
 
 def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
     combined_results = []
@@ -129,14 +132,6 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             rvol = vol / v_sma20 if v_sma20 > 0 else 1.0
             rvol_ok = rvol >= rvol_threshold
 
-            is_green = price >= open_p
-            if rvol >= 1.25 and is_green:
-                vol_status = "BULLISH (HEAVY BUY)"
-            elif rvol >= 1.25 and not is_green:
-                vol_status = "BEARISH (HEAVY SELL)"
-            else:
-                vol_status = "NORMAL / MODERATE"
-
             ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
             ema200 = c.ewm(span=200, adjust=False).mean()
@@ -156,32 +151,26 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
 
             dir_s = np.sign(c.diff()).fillna(0)
             obv_s = float((dir_s * v).cumsum().diff(10).iloc[-1])
-            obv_label = "INFLOW" if obv_s > 0 else "OUTFLOW"
-
-            bb_text, is_sq = get_bollinger(c, price)
 
             ema_diff = ((p_ema200 - prev_ema200) / prev_ema200) * 100
             slope = "UP" if ema_diff > 0.05 else ("DOWN" if ema_diff < -0.05 else "FLAT")
 
-            status, signal, msg = get_logic_result(
+            status, existing_action, new_action, msg = get_logic_result(
                 price, u_th, l_th, slope, adx, rsi, stoch,
-                obv_s, is_sq, ema20, sma50, rvol_ok, rvol, eff_buf
+                obv_s, False, ema20, sma50, rvol_ok, rvol, eff_buf
             )
 
             pct_ema200 = ((price - p_ema200) / p_ema200) * 100.0
-            ma_alignment = "ABOVE 20 & 50" if (price > ema20 and price > sma50) else "BELOW SHORT MAs"
 
             combined_results.append({
                 "Ticker": t,
                 "Price": round(price, 2),
                 "Macro Status": status,
-                "Action Signal": signal,
+                "👉 Existing Position": existing_action,
+                "🚀 New Entry": new_action,
                 "% vs 200 EMA": f"{pct_ema200:+.2f}%",
                 "200 EMA Slope": slope,
-                "Short MAs": ma_alignment,
-                "RVOL": round(rvol, 2),
-                "RSI (14)": round(rsi, 1),
-                "ADX": round(adx, 1),
+                "RSI": round(rsi, 1),
                 "Details & Rationale": msg,
             })
         except Exception as e:
@@ -189,7 +178,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
 
     return pd.DataFrame(combined_results)
 
-# --- Portfolio Rotation Engine (50/200 EMA Rule) ---
+# --- Portfolio Rotation Engine ---
 def evaluate_portfolio_rotation():
     st.subheader("🛡️ Dynamic Portfolio Rotation Engine (50 & 200 EMA Trigger Matrix)")
     st.markdown("Evaluates benchmark indexes (**SPY** and **QQQ**) to determine whether to hold **Risk-On** or rotate to **Safe Harbor** (SCYB / JAAA / JPST).")
@@ -231,8 +220,6 @@ def evaluate_portfolio_rotation():
     if rotation_data:
         df_rot = pd.DataFrame(rotation_data)
         st.table(df_rot)
-    else:
-        st.info("Loading rotation benchmark metrics...")
 
 # --- UI Layout ---
 
@@ -240,24 +227,9 @@ st.title("📈 " + REPO_NAME)
 st.caption("Last updated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 with st.expander("📖 **Methodology Guide & Portfolio Rotation Rules**"):
-    st.markdown("### **1. Dynamic Portfolio Rotation (50/200 EMA)**")
-    st.markdown("* **Full Risk-On:** Price > 200 EMA and > 50 SMA. Maintain full allocation to income/growth engines.")
-    st.markdown("* **Caution / Warning:** Price > 200 EMA but breaks below 50 SMA. Trim exposure or rotate 50% to safe harbor.")
-    st.markdown("* **Full Risk-Off:** Price < 200 EMA. Immediate rotation 100% into SCYB / JAAA / JPST safe harbor to prevent NAV erosion.")
-    st.markdown("---")
-    st.markdown("### **2. Preset Parameter Rationale**")
-
-    p_data = [
-        {
-            "Preset Name": f"**{name}**",
-            "Buffer (%)": f"{cfg['buffer']:.1f}%",
-            "Min RVOL": f"{cfg['rvol']:.2f}x",
-            "Min ATR (%)": f"{cfg['min_atr']:.2f}%",
-            "Calibration Rationale": cfg["rationale"],
-        }
-        for name, cfg in PRESET_CONFIGS.items()
-    ]
-    st.table(pd.DataFrame(p_data))
+    st.markdown("### **How to Read Your Ticker Table:**")
+    st.markdown("* **👉 Existing Position:** Tells you what to do with shares you currently own (**HOLD EXISTING** vs **🚨 ROTATE / SELL**).")
+    st.markdown("* **🚀 New Entry:** Tells you what to do if you are looking to put fresh cash to work (**ACCUMULATE** vs **WAIT**).")
 
 st.sidebar.header("Screener Configuration")
 
