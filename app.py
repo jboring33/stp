@@ -106,8 +106,7 @@ def get_logic_result(price, u_th, l_th, slope, adx, rsi, stoch, obv_s, is_sq, em
     return "🟡 Warning", "CAUTION", f"Crossed 200 EMA but slope ({slope}) unconfirmed."
 
 def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
-    macro_results = []
-    execution_results = []
+    combined_results = []
 
     for t in tickers:
         try:
@@ -172,39 +171,28 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             pct_ema200 = ((price - p_ema200) / p_ema200) * 100.0
             ma_alignment = "ABOVE 20 & 50" if (price > ema20 and price > sma50) else "BELOW SHORT MAs"
 
-            macro_results.append({
+            combined_results.append({
                 "Ticker": t,
                 "Price": round(price, 2),
                 "Macro Status": status,
-                "200 EMA": round(p_ema200, 2),
+                "Action Signal": signal,
                 "% vs 200 EMA": f"{pct_ema200:+.2f}%",
                 "200 EMA Slope": slope,
-                "ADX Strength": round(adx, 1),
-                "Noise Buffer": f"±{eff_buf*100:.1f}%",
-            })
-
-            execution_results.append({
-                "Ticker": t,
-                "Action Signal": signal,
                 "Short MAs": ma_alignment,
                 "RVOL": round(rvol, 2),
-                "Vol State": vol_status,
                 "RSI (14)": round(rsi, 1),
-                "Stoch %K": round(stoch, 1),
-                "OBV Flow": obv_label,
-                "Bollinger State": bb_text,
-                "ATR (%)": round(atr_pct, 2),
-                "Execution Rationale": msg,
+                "ADX": round(adx, 1),
+                "Details & Rationale": msg,
             })
         except Exception as e:
             st.error(f"Error processing {t}: {str(e)}")
 
-    return pd.DataFrame(macro_results), pd.DataFrame(execution_results)
+    return pd.DataFrame(combined_results)
 
 # --- Portfolio Rotation Engine (50/200 EMA Rule) ---
 def evaluate_portfolio_rotation():
     st.subheader("🛡️ Dynamic Portfolio Rotation Engine (50 & 200 EMA Trigger Matrix)")
-    st.markdown("Evaluates benchmark indexes (**SPY** and **QQQ**) to determine whether to hold **Risk-On** (SPYI/QQQI) or rotate to **Safe Harbor** (SCYB / JAAA / JPST).")
+    st.markdown("Evaluates benchmark indexes (**SPY** and **QQQ**) to determine whether to hold **Risk-On** or rotate to **Safe Harbor** (SCYB / JAAA / JPST).")
 
     benchmarks = ["SPY", "QQQ"]
     rotation_data = []
@@ -221,7 +209,7 @@ def evaluate_portfolio_rotation():
             
             if price > ema200 and price > sma50:
                 regime = "🟢 FULL RISK-ON"
-                action = "Hold SPYI / QQQI / VOO / VGT"
+                action = "Hold Risk-On Assets (SPYI / QQQI / VOO / VGT)"
             elif price > ema200 and price <= sma50:
                 regime = "🟡 CAUTION / PULLBACK"
                 action = "Trim Risk-On Exposure (50% to JAAA/JPST)"
@@ -325,27 +313,21 @@ st.divider()
 if run_screener:
     tickers_list = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
     if tickers_list:
-        with st.spinner("Analyzing market data & portfolio rotation signals..."):
-            df_macro, df_exec = analyze_tickers(
+        with st.spinner("Analyzing market data & rotation signals..."):
+            df_combined = analyze_tickers(
                 tickers_list,
                 default_buffer_pct=buffer_setting / 100.0,
                 rvol_threshold=rvol_setting,
             )
-        if not df_macro.empty:
-            st.subheader("🌐 1. Macro Trend Regime (Weeks to Months)")
-            st.dataframe(df_macro, use_container_width=True, hide_index=True)
+        if not df_combined.empty:
+            st.subheader("📋 Unified Portfolio Matrix & Execution Table")
+            st.dataframe(df_combined, use_container_width=True, hide_index=True)
 
             st.divider()
-
-            st.subheader("⚡ 2. Short-Term Execution & Triggers (Days to Weeks)")
-            st.dataframe(df_exec, use_container_width=True, hide_index=True)
-
-            st.divider()
-            full_df = pd.merge(df_macro, df_exec, on="Ticker")
-            csv_data = full_df.to_csv(index=False)
+            csv_data = df_combined.to_csv(index=False)
             st.download_button(
-                "📥 Download Full Matrix CSV",
+                "📥 Download Unified Matrix CSV",
                 csv_data,
-                "swing_trade_portfolio_full.csv",
+                "swing_trade_portfolio_unified.csv",
                 "text/csv",
             )
