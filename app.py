@@ -109,7 +109,8 @@ def get_logic_result(price, u_th, l_th, slope, adx, rsi, stoch, obv_s, is_sq, em
     return "🟡 Warning", "HOLD EXISTING", "CAUTION", f"Crossed 200 EMA boundary with unconfirmed slope ({slope}). Maintain current holding and monitor."
 
 def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
-    combined_results = []
+    action_results = []
+    detail_results = []
 
     for t in tickers:
         try:
@@ -132,6 +133,14 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             rvol = vol / v_sma20 if v_sma20 > 0 else 1.0
             rvol_ok = rvol >= rvol_threshold
 
+            is_green = price >= open_p
+            if rvol >= 1.25 and is_green:
+                vol_status = "BULLISH (HEAVY BUY)"
+            elif rvol >= 1.25 and not is_green:
+                vol_status = "BEARISH (HEAVY SELL)"
+            else:
+                vol_status = "NORMAL / MODERATE"
+
             ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
             ema200 = c.ewm(span=200, adjust=False).mean()
@@ -151,18 +160,22 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
 
             dir_s = np.sign(c.diff()).fillna(0)
             obv_s = float((dir_s * v).cumsum().diff(10).iloc[-1])
+            obv_label = "INFLOW" if obv_s > 0 else "OUTFLOW"
+
+            bb_text, is_sq = get_bollinger(c, price)
 
             ema_diff = ((p_ema200 - prev_ema200) / prev_ema200) * 100
             slope = "UP" if ema_diff > 0.05 else ("DOWN" if ema_diff < -0.05 else "FLAT")
 
             status, existing_action, new_action, msg = get_logic_result(
                 price, u_th, l_th, slope, adx, rsi, stoch,
-                obv_s, False, ema20, sma50, rvol_ok, rvol, eff_buf
+                obv_s, is_sq, ema20, sma50, rvol_ok, rvol, eff_buf
             )
 
             pct_ema200 = ((price - p_ema200) / p_ema200) * 100.0
+            ma_alignment = "ABOVE 20 & 50" if (price > ema20 and price > sma50) else "BELOW SHORT MAs"
 
-            combined_results.append({
+            action_results.append({
                 "Ticker": t,
                 "Price": round(price, 2),
                 "Macro Status": status,
@@ -170,13 +183,25 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
                 "🚀 New Entry": new_action,
                 "% vs 200 EMA": f"{pct_ema200:+.2f}%",
                 "200 EMA Slope": slope,
-                "RSI": round(rsi, 1),
                 "Details & Rationale": msg,
+            })
+
+            detail_results.append({
+                "Ticker": t,
+                "RVOL": round(rvol, 2),
+                "Vol State": vol_status,
+                "RSI (14)": round(rsi, 1),
+                "Stoch %K": round(stoch, 1),
+                "ADX": round(adx, 1),
+                "OBV Flow": obv_label,
+                "Bollinger State": bb_text,
+                "ATR (%)": round(atr_pct, 2),
+                "Short MAs": ma_alignment,
             })
         except Exception as e:
             st.error(f"Error processing {t}: {str(e)}")
 
-    return pd.DataFrame(combined_results)
+    return pd.DataFrame(action_results), pd.DataFrame(detail_results)
 
 # --- Portfolio Rotation Engine ---
 def evaluate_portfolio_rotation():
@@ -227,9 +252,9 @@ st.title("📈 " + REPO_NAME)
 st.caption("Last updated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 with st.expander("📖 **Methodology Guide & Portfolio Rotation Rules**"):
-    st.markdown("### **How to Read Your Ticker Table:**")
-    st.markdown("* **👉 Existing Position:** Tells you what to do with shares you currently own (**HOLD EXISTING** vs **🚨 ROTATE / SELL**).")
-    st.markdown("* **🚀 New Entry:** Tells you what to do if you are looking to put fresh cash to work (**ACCUMULATE** vs **WAIT**).")
+    st.markdown("### **How to Read Your Tables:**")
+    st.markdown("* **Primary Action Table:** Instantly tells you whether to hold your existing shares or execute a rotation.")
+    st.markdown("* **Detailed Metrics Table:** Provides auxiliary technical indicators (RVOL, RSI, ATR, OBV) for granular review.")
 
 st.sidebar.header("Screener Configuration")
 
@@ -286,20 +311,24 @@ if run_screener:
     tickers_list = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
     if tickers_list:
         with st.spinner("Analyzing market data & rotation signals..."):
-            df_combined = analyze_tickers(
+            df_action, df_detail = analyze_tickers(
                 tickers_list,
                 default_buffer_pct=buffer_setting / 100.0,
                 rvol_threshold=rvol_setting,
             )
-        if not df_combined.empty:
-            st.subheader("📋 Unified Portfolio Matrix & Execution Table")
-            st.dataframe(df_combined, use_container_width=True, hide_index=True)
+        if not df_action.empty:
+            st.subheader("📋 Primary Action Table (Hold vs. Rotate)")
+            st.dataframe(df_action, use_container_width=True, hide_index=True)
+
+            st.markdown("### 📊 Detailed Technical Metrics & Indicators")
+            st.dataframe(df_detail, use_container_width=True, hide_index=True)
 
             st.divider()
-            csv_data = df_combined.to_csv(index=False)
+            full_df = pd.merge(df_action, df_detail, on="Ticker")
+            csv_data = full_df.to_csv(index=False)
             st.download_button(
-                "📥 Download Unified Matrix CSV",
+                "📥 Download Full Combined CSV",
                 csv_data,
-                "swing_trade_portfolio_unified.csv",
+                "swing_trade_portfolio_full.csv",
                 "text/csv",
             )
