@@ -78,7 +78,7 @@ def get_bollinger(close, price):
     return f"NORMAL ({bw_c:.1f}%)", False
 
 def get_benchmark_regime(ticker_symbol):
-    """Determines the macro regime based on SPY for S&P-linked assets, QQQ for Nasdaq-linked assets, or standalone for others."""
+    """Evaluates 50 SMA and 200 SMA benchmark hierarchy for SPY/QQQ linked assets."""
     bench = "SPY" if "SPY" in ticker_symbol or "VOO" in ticker_symbol else ("QQQ" if "QQQ" in ticker_symbol or "VGT" in ticker_symbol else ticker_symbol)
     try:
         df = yf.download(bench, period="1y", interval="1d", auto_adjust=True, progress=False)
@@ -87,14 +87,14 @@ def get_benchmark_regime(ticker_symbol):
         c = df["Close"].squeeze()
         price = float(c.iloc[-1])
         sma50 = float(c.rolling(50).mean().iloc[-1])
-        ema200 = float(c.ewm(span=200, adjust=False).mean().iloc[-1])
+        sma200 = float(c.rolling(200).mean().iloc[-1])
 
-        if price > ema200 and price > sma50:
-            return "GREEN", f"Full Risk-On ({bench} > 50 SMA & 200 EMA)"
-        elif price > ema200 and price <= sma50:
+        if price > sma200 and price > sma50:
+            return "GREEN", f"Full Risk-On ({bench} > 50 SMA & 200 SMA)"
+        elif price > sma200 and price <= sma50:
             return "YELLOW", f"Caution / Pullback ({bench} broke below 50 SMA)"
         else:
-            return "RED", f"Full Bear ({bench} < 200 EMA)"
+            return "RED", f"Full Bear ({bench} < 200 SMA)"
     except:
         return "GREEN", "Default"
 
@@ -128,8 +128,8 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
 
             ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
-            ema200 = c.ewm(span=200, adjust=False).mean()
-            p_ema200 = float(ema200.iloc[-1])
+            sma200_series = c.rolling(200).mean()
+            p_sma200 = float(sma200_series.iloc[-1])
 
             atr = get_atr(df_clean)
             atr_pct = (atr / price) * 100
@@ -142,7 +142,6 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             obv_label = "INFLOW" if obv_s > 0 else "OUTFLOW"
             bb_text, _ = get_bollinger(c, price)
 
-            # Harmonize with Benchmark Regime (SPY/QQQ)
             regime_color, regime_msg = get_benchmark_regime(t)
 
             if regime_color == "GREEN":
@@ -161,7 +160,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
                 new_action = "SELL"
                 msg = f"Macro bear trigger hit. {regime_msg}. **Action:** Rotate 100% to SCYB/JAAA/JPST."
 
-            pct_ema200 = ((price - p_ema200) / p_ema200) * 100.0
+            pct_sma200 = ((price - p_sma200) / p_sma200) * 100.0
             ma_alignment = "ABOVE 20 & 50" if (price > ema20 and price > sma50) else "BELOW SHORT MAs"
 
             action_results.append({
@@ -170,7 +169,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
                 "Macro Regime": status,
                 "👉 Existing Position": existing_action,
                 "🚀 New Entry": new_action,
-                "% vs 200 EMA": f"{pct_ema200:+.2f}%",
+                "% vs 200 SMA": f"{pct_sma200:+.2f}%",
                 "Details & Rationale": msg,
             })
 
@@ -193,7 +192,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
 
 # --- Portfolio Rotation Engine ---
 def evaluate_portfolio_rotation():
-    st.subheader("🛡️ Dynamic Portfolio Rotation Engine (50 & 200 EMA Trigger Matrix)")
+    st.subheader("🛡️ Dynamic Portfolio Rotation Engine (50 SMA & 200 SMA Matrix)")
     st.markdown("Evaluates benchmark indexes (**SPY** and **QQQ**) to determine whether to hold **Risk-On** or rotate to **Safe Harbor** (SCYB / JAAA / JPST).")
 
     benchmarks = ["SPY", "QQQ"]
@@ -207,14 +206,14 @@ def evaluate_portfolio_rotation():
             c = df["Close"].squeeze()
             price = float(c.iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
-            ema200 = float(c.ewm(span=200, adjust=False).mean().iloc[-1])
+            sma200 = float(c.rolling(200).mean().iloc[-1])
             
-            if price > ema200 and price > sma50:
+            if price > sma200 and price > sma50:
                 regime = "🟢 FULL RISK-ON"
                 action = "Hold Risk-On Assets (SPYI / QQQI / VOO / VGT)"
-            elif price > ema200 and price <= sma50:
+            elif price > sma200 and price <= sma50:
                 regime = "🟡 CAUTION / PULLBACK"
-                action = "Trim Risk-On Exposure (50% to JAAA/JPST)"
+                action = "Trim 50% Exposure (to JAAA/JPST)"
             else:
                 regime = "🔴 FULL RISK-OFF (BEAR)"
                 action = "Rotate 100% to Safe Harbor (SCYB / JAAA / JPST)"
@@ -223,7 +222,7 @@ def evaluate_portfolio_rotation():
                 "Benchmark": b,
                 "Current Price": round(price, 2),
                 "50 SMA": round(sma50, 2),
-                "200 EMA": round(ema200, 2),
+                "200 SMA": round(sma200, 2),
                 "Market Regime": regime,
                 "Rotation Guidance": action
             })
@@ -240,8 +239,9 @@ st.title("📈 " + REPO_NAME)
 st.caption("Last updated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 with st.expander("📖 **Methodology Guide & Portfolio Rotation Rules**"):
-    st.markdown("### **How to Read Your Tables:**")
-    st.markdown("* **Primary Action Table:** Now directly synchronized with benchmark triggers so companion assets (SPYI/QQQI) match SPY/QQQ guidance.")
+    st.markdown("### **Portfolio Rotation Hierarchy:**")
+    st.markdown("* **50 SMA Lost:** Intermediate pullback. Trim 50% of risk-on exposure to JAAA/JPST while keeping 50% active for income.")
+    st.markdown("* **200 SMA Lost:** Secular bear market. Rotate 100% to Safe Harbor (SCYB/JAAA/JPST).")
 
 st.sidebar.header("Screener Configuration")
 
@@ -297,7 +297,7 @@ st.divider()
 if run_screener:
     tickers_list = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
     if tickers_list:
-        with st.spinner("Analyzing market data & synchronizing rotation signals..."):
+        with st.spinner("Analyzing market data & portfolio rotation signals..."):
             df_action, df_detail = analyze_tickers(
                 tickers_list,
                 default_buffer_pct=buffer_setting / 100.0,
