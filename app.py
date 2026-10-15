@@ -126,7 +126,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             is_green = price >= open_p
             vol_status = "BULLISH (HEAVY BUY)" if (rvol >= 1.25 and is_green) else ("BEARISH (HEAVY SELL)" if (rvol >= 1.25 and not is_green) else "NORMAL / MODERATE")
 
-            ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
+            sma20 = float(c.rolling(20).mean().iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
             sma200_series = c.rolling(200).mean()
             p_sma200 = float(sma200_series.iloc[-1])
@@ -161,7 +161,7 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
                 msg = f"Macro bear trigger hit. {regime_msg}. **Action:** Rotate 100% to SCYB/JAAA/JPST."
 
             pct_sma200 = ((price - p_sma200) / p_sma200) * 100.0
-            ma_alignment = "ABOVE 20 & 50" if (price > ema20 and price > sma50) else "BELOW SHORT MAs"
+            ma_alignment = "ABOVE 20 & 50" if (price > sma20 and price > sma50) else "BELOW SHORT MAs"
 
             action_results.append({
                 "Ticker": t,
