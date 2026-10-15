@@ -77,36 +77,26 @@ def get_bollinger(close, price):
         return f"LOWER BAND (${l_bb:.2f})", False
     return f"NORMAL ({bw_c:.1f}%)", False
 
-def get_logic_result(price, u_th, l_th, slope, adx, rsi, stoch, obv_s, is_sq, ema20, sma50, rvol_ok, rvol, buf):
-    # Above 200 EMA Buffer (Macro Uptrend)
-    if price > u_th and slope in ["UP", "FLAT"]:
-        if adx < 20:
-            return "⚪ Consolidating", "HOLD EXISTING", "WAIT (No New Buys)", f"Macro trend intact above 200 EMA, but ADX ({adx:.1f}) < 20 shows choppy consolidation. Keep holding current shares; do not add new money."
-        if rsi > 70 or stoch > 80:
-            return "🟡 Overbought", "HOLD EXISTING", "WAIT (Overextended)", f"Macro UP, but short-term RSI ({rsi:.1f}) / Stoch ({stoch:.1f}) are hot. Hold current shares, avoid adding."
-        if obv_s < 0 and rsi < 50:
-            return "🔴 Divergence", "HOLD / CAUTION", "WAIT", "Negative OBV volume outflow. Hold existing shares but monitor closely for trend weakness."
-        if is_sq:
-            return "🟡 Squeeze", "HOLD EXISTING", "WATCH", "Bollinger Band Squeeze active—prepare for breakout expansion while holding position."
-        if price > ema20 and price > sma50 and rvol_ok:
-            return "🟢 Bullish", "HOLD EXISTING", "ACCUMULATE", f"Strong trend: Macro UP + Short MAs aligned + RVOL ({rvol:.2f}x). Good to hold and accumulate more."
-        if price <= ema20 or price <= sma50:
-            return "🟡 Pullback", "HOLD EXISTING", "WAIT FOR BOUNCE", "Macro UP, but price is pulling back below short MAs (20 EMA / 50 SMA). Keep holding current shares; wait for bounce to add more."
-        return "🟡 Warning", "HOLD EXISTING", "LOW VOLUME", f"Price above buffer, but short-term RVOL ({rvol:.2f}x) lacks volume. Hold existing position."
+def get_benchmark_regime(ticker_symbol):
+    """Determines the macro regime based on SPY for S&P-linked assets, QQQ for Nasdaq-linked assets, or standalone for others."""
+    bench = "SPY" if "SPY" in ticker_symbol or "VOO" in ticker_symbol else ("QQQ" if "QQQ" in ticker_symbol or "VGT" in ticker_symbol else ticker_symbol)
+    try:
+        df = yf.download(bench, period="1y", interval="1d", auto_adjust=True, progress=False)
+        if df.empty:
+            return "GREEN", "Full Risk-On"
+        c = df["Close"].squeeze()
+        price = float(c.iloc[-1])
+        sma50 = float(c.rolling(50).mean().iloc[-1])
+        ema200 = float(c.ewm(span=200, adjust=False).mean().iloc[-1])
 
-    # Below 200 EMA Buffer (Macro Downtrend -> Rotation Trigger)
-    if price < l_th and slope == "DOWN":
-        if adx < 20:
-            return "⚪ Consolidating", "HOLD / CAUTION", "WEAK BEAR", f"Below 200 EMA buffer, but weak ADX ({adx:.1f}). Proceed with caution."
-        if rvol_ok:
-            return "🔴 Bearish", "🚨 ROTATE / SELL", "SELL", f"Selling volume confirmed below 200 EMA buffer (RVOL: {rvol:.2f}x). **Action:** Rotate to Safe Harbor (JAAA/JPST/SCYB)."
-        return "🔴 Bearish", "🚨 ROTATE / SELL", "SELL LOW VOL", "Below 200 EMA buffer with DOWN slope. **Action:** Rotate to Safe Harbor (JAAA/JPST/SCYB)."
-
-    # Inside Noise Buffer Zone around 200 EMA
-    if l_th <= price <= u_th:
-        return "⚪ Neutral", "HOLD EXISTING", "WAIT (Buffer Zone)", f"Price is within the +/-{buf*100:.1f}% noise buffer of the 200 EMA. **Action:** Hold existing holdings; do not initiate new buys until trend clarifies."
-
-    return "🟡 Warning", "HOLD EXISTING", "CAUTION", f"Crossed 200 EMA boundary with unconfirmed slope ({slope}). Maintain current holding and monitor."
+        if price > ema200 and price > sma50:
+            return "GREEN", f"Full Risk-On ({bench} > 50 SMA & 200 EMA)"
+        elif price > ema200 and price <= sma50:
+            return "YELLOW", f"Caution / Pullback ({bench} broke below 50 SMA)"
+        else:
+            return "RED", f"Full Bear ({bench} < 200 EMA)"
+    except:
+        return "GREEN", "Default"
 
 def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
     action_results = []
@@ -134,26 +124,15 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             rvol_ok = rvol >= rvol_threshold
 
             is_green = price >= open_p
-            if rvol >= 1.25 and is_green:
-                vol_status = "BULLISH (HEAVY BUY)"
-            elif rvol >= 1.25 and not is_green:
-                vol_status = "BEARISH (HEAVY SELL)"
-            else:
-                vol_status = "NORMAL / MODERATE"
+            vol_status = "BULLISH (HEAVY BUY)" if (rvol >= 1.25 and is_green) else ("BEARISH (HEAVY SELL)" if (rvol >= 1.25 and not is_green) else "NORMAL / MODERATE")
 
             ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
             sma50 = float(c.rolling(50).mean().iloc[-1])
             ema200 = c.ewm(span=200, adjust=False).mean()
             p_ema200 = float(ema200.iloc[-1])
-            prev_ema200 = float(ema200.iloc[-6])
 
             atr = get_atr(df_clean)
             atr_pct = (atr / price) * 100
-            eff_buf = max(default_buffer_pct, (atr / price) * 1.5)
-
-            u_th = p_ema200 * (1.0 + eff_buf)
-            l_th = p_ema200 * (1.0 - eff_buf)
-
             rsi = get_rsi(c)
             adx = get_adx(df_clean)
             stoch = get_stoch(df_clean)
@@ -161,16 +140,26 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             dir_s = np.sign(c.diff()).fillna(0)
             obv_s = float((dir_s * v).cumsum().diff(10).iloc[-1])
             obv_label = "INFLOW" if obv_s > 0 else "OUTFLOW"
+            bb_text, _ = get_bollinger(c, price)
 
-            bb_text, is_sq = get_bollinger(c, price)
+            # Harmonize with Benchmark Regime (SPY/QQQ)
+            regime_color, regime_msg = get_benchmark_regime(t)
 
-            ema_diff = ((p_ema200 - prev_ema200) / prev_ema200) * 100
-            slope = "UP" if ema_diff > 0.05 else ("DOWN" if ema_diff < -0.05 else "FLAT")
-
-            status, existing_action, new_action, msg = get_logic_result(
-                price, u_th, l_th, slope, adx, rsi, stoch,
-                obv_s, is_sq, ema20, sma50, rvol_ok, rvol, eff_buf
-            )
+            if regime_color == "GREEN":
+                status = "🟢 Bullish"
+                existing_action = "HOLD EXISTING"
+                new_action = "ACCUMULATE"
+                msg = f"Market regime healthy. {regime_msg}."
+            elif regime_color == "YELLOW":
+                status = "🟡 Caution / Pullback"
+                existing_action = "⚠️ TRIM 50% TO SAFE HARBOR"
+                new_action = "WAIT (Trim Mode)"
+                msg = f"Benchmark pullback detected. {regime_msg}. **Action:** Trim 50% of position to JAAA/JPST."
+            else:
+                status = "🔴 Bear / Risk-Off"
+                existing_action = "🚨 ROTATE 100% TO SAFE HARBOR"
+                new_action = "SELL"
+                msg = f"Macro bear trigger hit. {regime_msg}. **Action:** Rotate 100% to SCYB/JAAA/JPST."
 
             pct_ema200 = ((price - p_ema200) / p_ema200) * 100.0
             ma_alignment = "ABOVE 20 & 50" if (price > ema20 and price > sma50) else "BELOW SHORT MAs"
@@ -178,11 +167,10 @@ def analyze_tickers(tickers, default_buffer_pct=0.020, rvol_threshold=0.80):
             action_results.append({
                 "Ticker": t,
                 "Price": round(price, 2),
-                "Macro Status": status,
+                "Macro Regime": status,
                 "👉 Existing Position": existing_action,
                 "🚀 New Entry": new_action,
                 "% vs 200 EMA": f"{pct_ema200:+.2f}%",
-                "200 EMA Slope": slope,
                 "Details & Rationale": msg,
             })
 
@@ -253,8 +241,7 @@ st.caption("Last updated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 with st.expander("📖 **Methodology Guide & Portfolio Rotation Rules**"):
     st.markdown("### **How to Read Your Tables:**")
-    st.markdown("* **Primary Action Table:** Instantly tells you whether to hold your existing shares or execute a rotation.")
-    st.markdown("* **Detailed Metrics Table:** Provides auxiliary technical indicators (RVOL, RSI, ATR, OBV) for granular review.")
+    st.markdown("* **Primary Action Table:** Now directly synchronized with benchmark triggers so companion assets (SPYI/QQQI) match SPY/QQQ guidance.")
 
 st.sidebar.header("Screener Configuration")
 
@@ -310,7 +297,7 @@ st.divider()
 if run_screener:
     tickers_list = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
     if tickers_list:
-        with st.spinner("Analyzing market data & rotation signals..."):
+        with st.spinner("Analyzing market data & synchronizing rotation signals..."):
             df_action, df_detail = analyze_tickers(
                 tickers_list,
                 default_buffer_pct=buffer_setting / 100.0,
